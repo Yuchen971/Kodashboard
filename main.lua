@@ -1,6 +1,7 @@
 local Device = require("device")
 local UIManager = require("ui/uimanager")
 local WidgetContainer = require("ui/widget/container/widgetcontainer")
+local QRMessage = require("ui/widget/qrmessage")
 local Event = require("ui/event")
 local logger = require("logger")
 local util = require("util")
@@ -11,8 +12,6 @@ local KoDashboard = WidgetContainer:extend{
     name = "kodashboard",
     is_doc_only = false,
 }
-
-local should_run = G_reader_settings:isTrue("kodashboard_autostart")
 
 local HTTP_RESPONSE_CODE = {
     [200] = "OK",
@@ -42,11 +41,6 @@ local EXT_TO_CTYPE = {
 
 function KoDashboard:init()
     self.port = G_reader_settings:readSetting("kodashboard_port", "8686")
-    if should_run then
-        UIManager:nextTick(function()
-            self:start()
-        end)
-    end
     self.ui.menu:registerToMainMenu(self)
 end
 
@@ -68,14 +62,6 @@ end
 
 function KoDashboard:onCloseWidget()
     if self:isRunning() then self:stop() end
-end
-
-function KoDashboard:onLeaveStandby()
-    if should_run and not self:isRunning() then self:start() end
-end
-
-function KoDashboard:onResume()
-    if should_run and not self:isRunning() then self:start() end
 end
 
 function KoDashboard:start()
@@ -133,6 +119,29 @@ function KoDashboard:stop()
     logger.dbg("KoDashboard: Server stopped.")
 end
 
+function KoDashboard:showQRCode()
+    if not self:isRunning() then
+        self:start()
+    end
+    if not self:isRunning() then
+        return
+    end
+    local ip = self:getIP()
+    if not ip then
+        local InfoMessage = require("ui/widget/infomessage")
+        UIManager:show(InfoMessage:new{
+            text = _("No network IP detected. Connect to Wi-Fi and try again."),
+        })
+        return
+    end
+    local qr_size = math.floor(math.min(Device.screen:getWidth(), Device.screen:getHeight()) * 0.50)
+    UIManager:show(QRMessage:new{
+        text = T("http://%1:%2", ip, self.port),
+        width = qr_size,
+        height = qr_size,
+    })
+end
+
 function KoDashboard:addToMainMenu(menu_items)
     menu_items.kodashboard = {
         text = _("KoDashboard"),
@@ -149,13 +158,26 @@ function KoDashboard:addToMainMenu(menu_items)
                 keep_menu_open = true,
                 callback = function(touchmenu_instance)
                     if self:isRunning() then
-                        should_run = false
                         self:stop()
                     else
-                        should_run = true
                         self:start()
                     end
                     touchmenu_instance:updateItems()
+                end,
+            },
+            {
+                text_func = function()
+                    if self:isRunning() then
+                        return _("Show QR code")
+                    end
+                    return _("Show QR code (starts server)")
+                end,
+                keep_menu_open = true,
+                callback = function(touchmenu_instance)
+                    self:showQRCode()
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
                 end,
             },
             {
@@ -172,15 +194,6 @@ function KoDashboard:addToMainMenu(menu_items)
                 end,
                 enabled_func = function() return false end,
                 separator = true,
-            },
-            {
-                text = _("Auto start server"),
-                checked_func = function()
-                    return G_reader_settings:isTrue("kodashboard_autostart")
-                end,
-                callback = function()
-                    G_reader_settings:flipNilOrFalse("kodashboard_autostart")
-                end,
             },
             {
                 text_func = function()

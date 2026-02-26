@@ -44,8 +44,8 @@ Open it from any device on the same local network (phone, tablet, laptop) to exp
 - JSON API for books, highlights, stats, overview, and dashboard data
 - Bulk cover fetching (`Pull Covers`) with progress, pause/resume, and caching
 - Highlights tools: copy single annotation + export all highlights (JSON)
+- QR code shortcut in KOReader menu for quick mobile access
 - Configurable port (default `8686`)
-- Optional auto-start (for testing purpose)
 - Kindle support (opens/closes firewall rules when starting/stopping)
 
 ## Installation
@@ -70,11 +70,12 @@ Expected path:
 3. Tap `Start dashboard server`.
 4. KOReader will show a local address (for example `http://192.168.1.23:8686`).
 5. Open that URL in a browser on another device on the same Wi-Fi/network.
+6. Or tap `Show QR code` in the `KoDashboard` menu and scan it from your phone/tablet.
 
 ### KOReader plugin menu options
 
 - Start / Stop dashboard server
-- Auto start server (test purpose only; not recommended for daily use)
+- Show QR code (starts the server if needed)
 - Port (custom port setting)
 
 ## Cover Fetching (Pull Covers)
@@ -177,7 +178,6 @@ All endpoints are `GET` only.
 - Server binds to all interfaces (`*`) on the configured port
 - Static files are served from the plugin `web/` directory
 - Only `GET` requests are supported by the built-in server
-- `Auto start server` is mainly for testing/debugging and is not recommended for normal use
 
 ## Troubleshooting
 

@@ -1067,7 +1067,7 @@ body {
   font-family: var(--font-display);
   font-size: 1.35rem;
   line-height: 1;
-  color: var(--accent-rose);
+  color: var(--text);
 }
 .insight-card p {
   margin: 0;
