@@ -1,3 +1,18 @@
+# Important Clarification
+
+This plugin is primarily for my own use, and it's not intended to run as a continuously active web server on the Kindle. 
+
+The expected workflow is:
+
+- Launch the plugin when needed
+
+- Briefly access the dashboard from a phone or computer on the same local network
+
+- Stop the server after reviewing the data
+
+**It is designed for short, on-demand sessions rather than persistent background operation.**
+**If you are looking for a continuously hosted or externally accessible solution, alternatives such as KOInsight (self-hosted) or KOStatsMulti (publicly hosted) may be more appropriate depending on your preferences.**
+
 # KoDashboard
 
 A KOReader plugin that starts a lightweight local web server and exposes a browser dashboard for your reading data.
