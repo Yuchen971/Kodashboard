@@ -1,6 +1,6 @@
 # Important Clarification
 
-This plugin is primarily for my own use, and it's not intended to run as a continuously active web server on the Kindle. 
+This plugin is primarily for my own use, and it's not intended to run as a continuously active web server on the Kindle. (unless you want to drain the device’s battery.)
 
 The expected workflow is:
 
