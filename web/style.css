@@ -598,6 +598,7 @@ body {
   font-size: 1.85rem;
   line-height: .95;
   letter-spacing: -.02em;
+  color: var(--accent-pink);
 }
 .hero-card-sub {
   margin-top: 8px;
@@ -619,11 +620,52 @@ body {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+.books-view-toggle {
+  padding: 2px;
+  gap: 2px;
+}
+.books-view-toggle .seg-btn {
+  min-width: 30px;
+  min-height: 30px;
+  border-radius: 9px;
+  padding: 0;
+  justify-content: center;
+  gap: 0;
+}
+.books-view-toggle .seg-btn svg {
+  width: 14px;
+  height: 14px;
+}
 .toolbar-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+}
+.toolbar-row-books {
+  flex-wrap: nowrap;
+  align-items: center;
+}
+.toolbar-row-books .search-box {
+  flex: 0 1 340px;
+  min-width: 220px;
+}
+.toolbar-row-books .filter-pills {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
+}
+.toolbar-row-books .filter-pills::-webkit-scrollbar { display: none; }
+.toolbar-row-books .pill {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.toolbar-row-books .toolbar-right {
+  flex: 0 0 auto;
+  flex-wrap: nowrap;
 }
 .toolbar-row + .toolbar-row { margin-top: 10px; }
 .toolbar-row-wrap { flex-wrap: wrap; }
@@ -655,8 +697,8 @@ body {
 }
 .seg-btn svg { width: 14px; height: 14px; }
 .seg-btn.active {
-  color: var(--text);
-  background: rgba(246,167,223,.12);
+  color: var(--bg-0);
+  background: var(--accent-pink);
 }
 
 .filter-pills {
@@ -1045,11 +1087,6 @@ body {
 .stats-range-group .ghost-btn.tiny {
   min-width: 42px;
 }
-.stats-range-group .ghost-btn.tiny.is-active {
-  border-color: var(--border-strong);
-  background: linear-gradient(180deg, rgba(246,167,223,.14), rgba(246,167,223,.06));
-  box-shadow: inset 0 0 0 1px rgba(246,167,223,.08);
-}
 .insight-chip {
   display: inline-flex;
   align-items: center;
@@ -1130,7 +1167,7 @@ html[data-color-scheme='light'] .chart-grid { stroke: rgba(16,39,31,.07); }
   background: rgba(255,255,255,.02);
 }
 .stat-mini span { color: var(--text-faint); font-size: .74rem; display: block; }
-.stat-mini strong { font-family: var(--font-display); font-size: 1.05rem; }
+.stat-mini strong { font-family: var(--font-display); font-size: 1.05rem; color: var(--accent-pink); }
 
 .bars-wrap {
   display: grid;
@@ -1314,7 +1351,7 @@ html[data-color-scheme='light'] .chart-grid { stroke: rgba(16,39,31,.07); }
   background: rgba(255,255,255,.015);
 }
 .mini-stat span { display: block; color: var(--text-faint); font-size: .74rem; }
-.mini-stat strong { font-family: var(--font-display); font-size: 1.2rem; color: var(--text); }
+.mini-stat strong { font-family: var(--font-display); font-size: 1.2rem; color: var(--accent-pink); }
 
 .calendar-month-switcher {
   margin-top: 14px;
@@ -1334,9 +1371,10 @@ html[data-color-scheme='light'] .chart-grid { stroke: rgba(16,39,31,.07); }
   padding: 0 14px;
   font-weight: 700;
 }
-.month-pill.active {
+.month-pill.active,
+.month-pill.is-active {
   color: var(--bg-0);
-  background: var(--accent-rose);
+  background: var(--accent-pink);
   border-color: rgba(255,255,255,.2);
 }
 .calendar-nav-right {
@@ -1472,7 +1510,7 @@ html[data-color-scheme='light'] .chart-grid { stroke: rgba(16,39,31,.07); }
   padding: 10px;
 }
 .day-detail-summary span { color: var(--text-faint); font-size: .74rem; display: block; }
-.day-detail-summary strong { font-family: var(--font-display); font-size: 1.12rem; }
+.day-detail-summary strong { font-family: var(--font-display); font-size: 1.12rem; color: var(--accent-pink); }
 .calendar-detail-list { display: grid; gap: 8px; }
 .calendar-detail-item {
   display: grid;
@@ -1919,6 +1957,7 @@ html[data-color-scheme='light'] .milestone-point .milestone-dot { border-color: 
   }
   .calendar-hero-stats { grid-template-columns: 1fr; width: 100%; }
   .toolbar-row { flex-wrap: wrap; }
+  .toolbar-row-books { flex-wrap: wrap; }
   .search-box { min-width: 100%; }
   .toolbar-row .segmented {
     width: 100%;
@@ -1980,14 +2019,16 @@ html[data-color-scheme='light'] .milestone-point .milestone-dot { border-color: 
     grid-column: 1 / -1;
     width: 100%;
   }
-  .library-head-right {
-    width: 100%;
-    justify-content: space-between;
-    align-items: center;
+  .library-panel .section-head {
+    flex-direction: row;
+    align-items: flex-start;
   }
-  .library-head-right .section-note {
-    flex: 1;
-    min-width: 0;
+  .library-head-right {
+    width: auto;
+    justify-content: flex-end;
+    align-items: center;
+    margin-left: auto;
+    flex-shrink: 0;
   }
   .stats-trend-head-right { justify-items: stretch; width: 100%; }
 }
@@ -2167,14 +2208,22 @@ html[data-color-scheme='light'] .milestone-point .milestone-dot { border-color: 
     min-height: 36px;
   }
   .toolbar-right #pullCoversBtn { grid-column: 1 / -1; width: 100%; }
-  .library-head-right {
-    width: 100%;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 6px;
+  .library-panel .section-head {
+    flex-direction: row;
+    align-items: flex-start;
   }
-  .library-head-right .section-note { width: 100%; }
-  .library-head-right #pullCoversBtn { width: 100%; }
+  .library-head-right {
+    width: auto;
+    flex-direction: row;
+    align-items: center;
+    gap: 6px;
+    margin-left: auto;
+  }
+  .library-head-right #pullCoversBtn { width: auto; }
+  .library-head-right .books-view-toggle {
+    width: auto;
+    align-self: auto;
+  }
   .hero-card {
     padding: 12px;
     border-radius: 16px;

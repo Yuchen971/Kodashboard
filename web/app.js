@@ -963,22 +963,15 @@ async function renderBooks() {
       </section>
 
       <section class="panel controls-panel">
-        <div class="toolbar-row">
+        <div class="toolbar-row toolbar-row-books">
           <div class="search-box">
             <span class="ic">${icon('search', 16)}</span>
             <input id="booksSearch" type="text" placeholder="Search title or author" value="${esc(state.booksSearch)}">
           </div>
-          <div class="segmented" aria-label="View mode">
-            <button class="seg-btn ${state.booksMode === 'grid' ? 'active' : ''}" data-books-mode="grid">${icon('grid', 14)} Grid</button>
-            <button class="seg-btn ${state.booksMode === 'table' ? 'active' : ''}" data-books-mode="table">${icon('table', 14)} Table</button>
-          </div>
-        </div>
-
-        <div class="toolbar-row toolbar-row-wrap">
           <div class="filter-pills" role="tablist" aria-label="Book filters">
             ${['all','reading','finished','highlighted'].map(k => {
               const labels = { all:'All', reading:'Reading', finished:'Finished', highlighted:'With highlights' };
-              return `<button class="pill ${state.booksFilter === k ? 'active' : ''}" data-books-filter="${k}">${esc(labels[k])}</button>`;
+              return `<button class="pill month-pill ${state.booksFilter === k ? 'active' : ''}" data-books-filter="${k}">${esc(labels[k])}</button>`;
             }).join('')}
           </div>
           <div class="toolbar-right">
@@ -1004,7 +997,10 @@ async function renderBooks() {
             <h2><span id="booksCountValue">${fmtNumber(books.length)}</span> books</h2>
           </div>
           <div class="library-head-right">
-            <div class="section-note">${state.booksMode === 'grid' ? 'Card view with key reading details' : 'Compact table with key reading metrics'}</div>
+            <div class="segmented books-view-toggle" role="tablist" aria-label="View mode">
+              <button class="seg-btn icon-only-btn ${state.booksMode === 'grid' ? 'active' : ''}" type="button" data-books-mode="grid" aria-label="Grid view" aria-pressed="${state.booksMode === 'grid' ? 'true' : 'false'}" title="Grid view">${icon('grid', 14)}</button>
+              <button class="seg-btn icon-only-btn ${state.booksMode === 'table' ? 'active' : ''}" type="button" data-books-mode="table" aria-label="Table view" aria-pressed="${state.booksMode === 'table' ? 'true' : 'false'}" title="Table view">${icon('table', 14)}</button>
+            </div>
             <button class="ghost-btn" id="pullCoversBtn" ${state.coverPullJob?.running ? 'disabled' : ''}>
               ${icon('spark', 14)} ${state.coverPullJob?.running ? 'Pulling covers…' : 'Pull Covers'}
             </button>
@@ -1253,7 +1249,7 @@ async function renderStats() {
             <div><div class="section-kicker">Trend</div><h2>Reading trend (${trendDays} days)</h2></div>
             <div class="stats-trend-head-right">
               <div class="segmented-inline stats-range-group" role="tablist" aria-label="Trend range">
-                ${[30, 90, 180, 365].map((n) => `<button class="ghost-btn tiny ${trendDays === n ? 'is-active' : ''}" type="button" data-trend-days="${n}" aria-pressed="${trendDays === n ? 'true' : 'false'}">${n}</button>`).join('')}
+                ${[30, 90, 180, 365].map((n) => `<button class="ghost-btn tiny month-pill ${trendDays === n ? 'is-active' : ''}" type="button" data-trend-days="${n}" aria-pressed="${trendDays === n ? 'true' : 'false'}">${n}</button>`).join('')}
               </div>
               <div class="section-note">Active days: ${fmtNumber(trendActiveDays)} · Longest day: ${formatDuration(trendLongestDay)}</div>
             </div>
