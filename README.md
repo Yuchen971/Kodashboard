@@ -4,6 +4,39 @@ A KOReader plugin that starts a lightweight local web server and exposes a brows
 
 Open it from any device on the same local network (phone, tablet, laptop) to explore your library, reading progress, statistics, calendar activity, and highlights/notes.
 
+## Screenshots
+
+### Books
+
+<p align="center">
+  <img src="./screenshots/Books%20-%20Desktop.jpeg" alt="Books Desktop" width="64%" />
+  <img src="./screenshots/Books%20-%20Mobile.png" alt="Books Mobile" width="30%" />
+</p>
+
+<p align="center">
+  <img src="./screenshots/Books%20Detail%20-%20Desktop.png" alt="Book Detail Desktop" width="82%" />
+</p>
+
+### Calendar
+
+<p align="center">
+  <img src="./screenshots/Calendar%20-%20Desktop.png" alt="Calendar Desktop" width="64%" />
+  <img src="./screenshots/Calendar%20-%20Mobile.png" alt="Calendar Mobile" width="30%" />
+</p>
+
+### Stats
+
+<p align="center">
+  <img src="./screenshots/Stats%20-%20Desktop.png" alt="Stats Desktop" width="64%" />
+  <img src="./screenshots/Stats%20-%20Mobile.png" alt="Stats Mobile" width="30%" />
+</p>
+
+### Highlights
+
+<p align="center">
+  <img src="./screenshots/Highlights.png" alt="Highlights" width="82%" />
+</p>
+
 ## Features
 
 - Runs directly inside KOReader
@@ -173,32 +206,6 @@ The exported JSON includes structured rows such as:
 - Datetime
 - Highlight text
 - Note text
-
-## Screenshots
-
-### Books
-
-![Books Desktop](./screenshots/Books%20-%20Desktop.jpeg)
-
-![Books Mobile](./screenshots/Books%20-%20Mobile.png)
-
-![Book Detail Desktop](./screenshots/Books%20Detail%20-%20Desktop.png)
-
-### Calendar
-
-![Calendar Desktop](./screenshots/Calendar%20-%20Desktop.png)
-
-![Calendar Mobile](./screenshots/Calendar%20-%20Mobile.png)
-
-### Stats
-
-![Stats Desktop](./screenshots/Stats%20-%20Desktop.png)
-
-![Stats Mobile](./screenshots/Stats%20-%20Mobile.png)
-
-### Highlights
-
-![Highlights](./screenshots/Highlights.png)
 
 ## API Endpoints
 
