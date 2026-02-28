@@ -162,7 +162,9 @@ function KoDashboard:addToMainMenu(menu_items)
                     else
                         self:start()
                     end
-                    touchmenu_instance:updateItems()
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
                 end,
             },
             {
@@ -225,7 +227,9 @@ function KoDashboard:addToMainMenu(menu_items)
                                         self.port = new_port
                                         G_reader_settings:saveSetting("kodashboard_port", new_port)
                                     end
-                                    touchmenu_instance:updateItems()
+                                    if touchmenu_instance then
+                                        touchmenu_instance:updateItems()
+                                    end
                                 end,
                             },
                         }},
@@ -268,6 +272,9 @@ function KoDashboard:sendResponse(reqinfo, http_code, content_type, body)
         body = ""
     end
     table.insert(response, "Access-Control-Allow-Origin: *")
+    table.insert(response, "Cache-Control: no-store, no-cache, must-revalidate, max-age=0")
+    table.insert(response, "Pragma: no-cache")
+    table.insert(response, "Expires: 0")
     table.insert(response, T("Content-Length: %1", #body))
     table.insert(response, "Connection: close")
     table.insert(response, "")
@@ -281,9 +288,52 @@ end
 
 function KoDashboard:onRequest(data, request_id)
     local reqinfo = { request_id = request_id }
-    local method, uri = data:match("^(%u+) ([^\n]*) HTTP/%d%.%d\r?\n.*")
-    if method ~= "GET" then
-        return self:sendResponse(reqinfo, 405, CTYPE.TEXT, "Only GET supported")
+    local head, body = data:match("^(.-)\r?\n\r?\n(.*)$")
+    head = head or data
+    body = body or ""
+
+    local method, uri = head:match("^(%u+)%s+([^%s]+)%s+HTTP/%d%.%d")
+    if not method or not uri then
+        return self:sendResponse(reqinfo, 400, CTYPE.TEXT, "Malformed request")
+    end
+
+    local headers = {}
+    for line in head:gmatch("\r?\n([^\r\n]+)") do
+        local k, v = line:match("^%s*([^:]+):%s*(.*)$")
+        if k and v then
+            headers[tostring(k):lower()] = v
+        end
+    end
+
+    reqinfo.method = method
+    reqinfo.headers = headers
+    reqinfo.body = body
+
+    if method == "POST" then
+        local clen = tonumber(headers["content-length"] or "0") or 0
+        if clen < 0 then clen = 0 end
+        if #reqinfo.body < clen and request_id and request_id.receive then
+            local remain = clen - #reqinfo.body
+            local chunks = { reqinfo.body }
+            while remain > 0 do
+                local part, err, partial = request_id:receive(remain)
+                if part and #part > 0 then
+                    table.insert(chunks, part)
+                    remain = remain - #part
+                elseif partial and #partial > 0 then
+                    table.insert(chunks, partial)
+                    remain = remain - #partial
+                else
+                    logger.warn("KoDashboard: failed reading POST body:", err or "unknown")
+                    break
+                end
+            end
+            reqinfo.body = table.concat(chunks)
+        end
+    end
+
+    if method ~= "GET" and method ~= "POST" then
+        return self:sendResponse(reqinfo, 405, CTYPE.TEXT, "Only GET/POST supported")
     end
 
     uri = util.urlDecode(uri)
@@ -292,8 +342,51 @@ function KoDashboard:onRequest(data, request_id)
 
     -- API routes
     if util.stringStartsWith(path, "/api/") then
-        local api = require("api")
-        return api.handleRequest(self, reqinfo, path, uri)
+        local ok_api, api = pcall(require, "api")
+        if not ok_api or type(api) ~= "table" then
+            logger.err("KoDashboard: failed to load api module:", tostring(api))
+            return self:sendResponse(reqinfo, 500, CTYPE.JSON, '{"error":"api module load failed"}')
+        end
+
+        if type(api.handleRequest) == "function" then
+            return api.handleRequest(self, reqinfo, path, uri)
+        end
+
+        -- Backward compatibility for mixed plugin files where api.lua is older.
+        if type(api.route) == "function" then
+            logger.warn("KoDashboard: api.handleRequest missing, falling back to api.route")
+            local JSON = require("json")
+            local ok_route, payload = xpcall(function()
+                return api.route(path, uri, reqinfo)
+            end, function(err)
+                if debug and debug.traceback then
+                    return debug.traceback(tostring(err), 2)
+                end
+                return tostring(err)
+            end)
+            if not ok_route then
+                logger.err("KoDashboard: legacy api.route error:", payload)
+                local enc_ok, err_body = pcall(JSON.encode, {
+                    error = "internal server error",
+                    detail = tostring(payload),
+                })
+                if enc_ok then
+                    return self:sendResponse(reqinfo, 500, CTYPE.JSON, err_body)
+                end
+                return self:sendResponse(reqinfo, 500, CTYPE.JSON,
+                    '{"error":"internal server error","detail":"failed to encode error"}')
+            end
+
+            local enc_ok, json_str = pcall(JSON.encode, payload)
+            if not enc_ok then
+                logger.err("KoDashboard: legacy api JSON encode error:", json_str)
+                return self:sendResponse(reqinfo, 500, CTYPE.JSON, '{"error":"json encoding failed"}')
+            end
+            return self:sendResponse(reqinfo, 200, CTYPE.JSON, json_str)
+        end
+
+        logger.err("KoDashboard: api module missing request handlers")
+        return self:sendResponse(reqinfo, 500, CTYPE.JSON, '{"error":"api handler missing"}')
     end
 
     -- Static file serving from plugin's web/ directory
@@ -302,6 +395,9 @@ function KoDashboard:onRequest(data, request_id)
     end
     local plugin_dir = self:getPluginDir()
     local filepath = plugin_dir .. "/web" .. path
+    if method ~= "GET" then
+        return self:sendResponse(reqinfo, 405, CTYPE.TEXT, "Method not allowed")
+    end
     local f = io.open(filepath, "rb")
     if f then
         local content = f:read("*all")

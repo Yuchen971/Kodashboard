@@ -72,6 +72,46 @@ async function apiNoCache(path) {
   return payload;
 }
 
+async function apiNoCacheBinary(path, body, contentType = 'application/octet-stream') {
+  const r = await fetch('/api/' + path, {
+    method: 'POST',
+    headers: { 'Content-Type': contentType },
+    body,
+  });
+  let payload = null;
+  try {
+    payload = await r.json();
+  } catch {
+    try {
+      payload = await r.text();
+    } catch {
+      payload = null;
+    }
+  }
+  if (!r.ok) {
+    const msg = typeof payload === 'string'
+      ? payload
+      : (payload?.detail || payload?.error || JSON.stringify(payload || {}));
+    throw new Error(`API /${path} returned ${r.status}: ${msg}`);
+  }
+  return payload;
+}
+
+let jsquashWebpEncodePromise = null;
+let jsquashWebpDisabled = false;
+
+async function getJsquashWebpEncode() {
+  if (jsquashWebpDisabled) return null;
+  if (!jsquashWebpEncodePromise) {
+    jsquashWebpEncodePromise = import('https://esm.sh/@jsquash/webp@1.5.0')
+      .then((m) => (typeof m?.encode === 'function' ? m.encode : null))
+      .catch(() => null);
+  }
+  const encode = await jsquashWebpEncodePromise;
+  if (!encode) jsquashWebpDisabled = true;
+  return encode;
+}
+
 /* ============================================================
    Utilities
    ============================================================ */
@@ -82,8 +122,101 @@ function esc(s) {
   return d.innerHTML;
 }
 
+function toArray(v) {
+  if (Array.isArray(v)) return v;
+  if (v && typeof v === 'object') return Object.values(v);
+  return [];
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function blobToImageSource(blob) {
+  if (window.createImageBitmap) {
+    try {
+      const bmp = await createImageBitmap(blob);
+      return { image: bmp, width: bmp.width, height: bmp.height, release: () => bmp.close?.() };
+    } catch (_) {}
+  }
+  const url = URL.createObjectURL(blob);
+  try {
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = () => reject(new Error('image decode failed'));
+      el.src = url;
+    });
+    return { image: img, width: img.naturalWidth || img.width, height: img.naturalHeight || img.height, release: () => URL.revokeObjectURL(url) };
+  } catch (e) {
+    URL.revokeObjectURL(url);
+    throw e;
+  }
+}
+
+function canvasToBlob(canvas, type, quality) {
+  return new Promise((resolve, reject) => {
+    canvas.toBlob((blob) => {
+      if (blob) resolve(blob);
+      else reject(new Error(`canvas encode failed (${type})`));
+    }, type, quality);
+  });
+}
+
+async function compressCoverBlob(blob, { maxEdge = 640, quality = 0.72 } = {}) {
+  const src = await blobToImageSource(blob);
+  try {
+    const srcW = Math.max(1, Number(src.width) || 1);
+    const srcH = Math.max(1, Number(src.height) || 1);
+    const scale = Math.min(1, maxEdge / Math.max(srcW, srcH));
+    const dstW = Math.max(1, Math.round(srcW * scale));
+    const dstH = Math.max(1, Math.round(srcH * scale));
+
+    const canvas = document.createElement('canvas');
+    canvas.width = dstW;
+    canvas.height = dstH;
+    const ctx = canvas.getContext('2d', { alpha: false, willReadFrequently: false });
+    if (!ctx) throw new Error('canvas context unavailable');
+    ctx.drawImage(src.image, 0, 0, dstW, dstH);
+
+    // Prefer libwebp (WASM) encoding for browsers with flaky native canvas webp support.
+    const encodeWebp = await getJsquashWebpEncode();
+    if (encodeWebp) {
+      try {
+        const imageData = ctx.getImageData(0, 0, dstW, dstH);
+        const webpBuf = await encodeWebp(imageData, { quality: Math.max(1, Math.min(100, Math.round(quality * 100))) });
+        if (webpBuf && webpBuf.byteLength > 0) {
+          return { blob: new Blob([webpBuf], { type: 'image/webp' }), contentType: 'image/webp' };
+        }
+      } catch (_) {}
+    }
+
+    const webpBlob = await canvasToBlob(canvas, 'image/webp', quality).catch(() => null);
+    if (webpBlob && webpBlob.size > 0 && String(webpBlob.type || '').toLowerCase() === 'image/webp') {
+      return { blob: webpBlob, contentType: 'image/webp' };
+    }
+    const jpgBlob = await canvasToBlob(canvas, 'image/jpeg', quality);
+    if (jpgBlob && jpgBlob.size > 0 && String(jpgBlob.type || '').toLowerCase() === 'image/jpeg') {
+      return { blob: jpgBlob, contentType: 'image/jpeg' };
+    }
+    const pngBlob = await canvasToBlob(canvas, 'image/png', quality).catch(() => null);
+    if (pngBlob && pngBlob.size > 0) {
+      return { blob: pngBlob, contentType: 'image/png' };
+    }
+    throw new Error('cover encode failed');
+  } finally {
+    src.release?.();
+  }
+}
+
+async function compressAndUploadBookCover(bookRef) {
+  const coverUrl = `${bookCoverUrl(bookRef)}&ts=${Date.now()}`;
+  const r = await fetch(coverUrl, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`cover fetch failed (${r.status})`);
+  const rawBlob = await r.blob();
+  if (!rawBlob || !rawBlob.size) throw new Error('empty cover body');
+  const compressed = await compressCoverBlob(rawBlob, { maxEdge: 640, quality: 0.72 });
+  return apiNoCacheBinary(`books/${encBookRef(bookRef)}/upload-cover`, compressed.blob, compressed.contentType);
 }
 
 function debounceRun(timerKey, fn, delay = 180) {
@@ -344,7 +477,7 @@ function buildStatsIndexes(statsBooks = []) {
   const byMd5 = new Map();
   const byTitleAuthor = new Map();
   const byTitle = {};
-  for (const s of statsBooks) {
+  for (const s of toArray(statsBooks)) {
     if (!s) continue;
     if (s.md5 && !byMd5.has(String(s.md5))) byMd5.set(String(s.md5), s);
     const titleKey = normalizeTitle(s.title);
@@ -378,7 +511,7 @@ function annotationFingerprint(a) {
 function dedupeAnnotationsForDisplay(items = []) {
   const seen = new Set();
   const out = [];
-  for (const a of items) {
+  for (const a of toArray(items)) {
     const fp = annotationFingerprint(a);
     if (seen.has(fp)) continue;
     seen.add(fp);
@@ -730,7 +863,7 @@ function findBestStatsMatch(book, statsBooks = [], statsIndexes = null) {
 
   let best = null;
   let bestScore = 0;
-  for (const s of statsBooks) {
+  for (const s of toArray(statsBooks)) {
     const st = normalizeLooseTitle(s.title);
     if (!st) continue;
     let score = 0;
@@ -772,7 +905,7 @@ function dedupeBooksForDisplay(books = []) {
     return score;
   }
 
-  for (const b of books) {
+  for (const b of toArray(books)) {
     const md5Key = b?.md5 ? `md5:${String(b.md5)}` : '';
     const titleKey = normalizeLooseTitle(b?.title || '');
     const authorKey = normalizeLooseTitle(b?.authors || '');
@@ -797,7 +930,7 @@ function buildLibraryCoverResolver(books = []) {
   const byTitleAuthor = new Map();
   const byTitle = new Map();
 
-  for (const b of books) {
+  for (const b of toArray(books)) {
     const cover_url = bookCoverUrl(b.id);
     const enriched = { ...b, cover_url };
     if (b.md5) byMd5.set(String(b.md5), enriched);
@@ -904,9 +1037,10 @@ async function renderBooks() {
     api('stats').catch(() => ({ books: [], daily: [] })),
   ]);
 
-  const allBooks = dedupeBooksForDisplay(booksResp.books || []);
+  const statsBooks = toArray(statsResp.books);
+  const allBooks = dedupeBooksForDisplay(toArray(booksResp.books));
   allBooks.forEach((b) => { b.cover_url = bookCoverUrl(b.id); });
-  const statsIndexes = buildStatsIndexes(statsResp.books || []);
+  const statsIndexes = buildStatsIndexes(statsBooks);
 
   let books = allBooks.filter((b) => {
     const q = state.booksSearch.trim().toLowerCase();
@@ -919,8 +1053,8 @@ async function renderBooks() {
 
   books.sort((a, b) => {
     const dir = state.booksSortDir === 'asc' ? 1 : -1;
-    const sa = findBestStatsMatch(a, statsResp.books || [], statsIndexes) || {};
-    const sb = findBestStatsMatch(b, statsResp.books || [], statsIndexes) || {};
+    const sa = findBestStatsMatch(a, statsBooks, statsIndexes) || {};
+    const sb = findBestStatsMatch(b, statsBooks, statsIndexes) || {};
     let av;
     let bv;
     switch (state.booksSortKey) {
@@ -1006,7 +1140,7 @@ async function renderBooks() {
             </button>
           </div>
         </div>
-        ${books.length ? (state.booksMode === 'grid' ? buildBooksGrid(books, statsIndexes, statsResp.books || []) : buildBooksTable(books, statsIndexes, statsResp.books || [])) : '<div class="empty-inline">No books match your filters.</div>'}
+        ${books.length ? (state.booksMode === 'grid' ? buildBooksGrid(books, statsIndexes, statsBooks) : buildBooksTable(books, statsIndexes, statsBooks)) : '<div class="empty-inline">No books match your filters.</div>'}
       </section>
     </div>`;
 
@@ -1051,7 +1185,7 @@ function bindBooksEvents() {
   });
   document.getElementById('pullCoversBtn')?.addEventListener('click', async () => {
     const booksResp = await api('books');
-    const allBooks = dedupeBooksForDisplay(booksResp.books || []);
+    const allBooks = dedupeBooksForDisplay(toArray(booksResp.books));
     if (!allBooks.length) return;
 
     state.coverPullJob = {
@@ -1079,9 +1213,13 @@ function bindBooksEvents() {
       renderBooksProgressOnly();
       try {
         const res = await apiNoCache(`books/${encBookRef(b.id)}/fetch-cover`);
-        if (res?.saved) state.coverPullJob.saved += 1;
-        else if (res?.skipped) state.coverPullJob.skipped += 1;
-        else {
+        if (res?.saved) {
+          const up = await compressAndUploadBookCover(b.id);
+          if (up?.saved) state.coverPullJob.saved += 1;
+          else state.coverPullJob.skipped += 1;
+        } else if (res?.skipped) {
+          state.coverPullJob.skipped += 1;
+        } else {
           state.coverPullJob.failed += 1;
           if (state.coverPullJob.errors.length < 6) {
             const parts = [];
@@ -1202,7 +1340,7 @@ async function renderStats() {
     getDashboard(),
     api('books').catch(() => ({ books: [] })),
   ]);
-  const coverResolver = buildLibraryCoverResolver(booksResp.books || []);
+  const coverResolver = buildLibraryCoverResolver(toArray(booksResp.books));
   const s = dash.summary || {};
   const k = dash.kpis || {};
   const series = dash.series || {};
@@ -1307,10 +1445,10 @@ async function renderStats() {
 function buildInsights(dash, opts = {}) {
   const s = dash.summary || {};
   const k = dash.kpis || {};
-  const weekdays = opts.weekdaySeries || dash.series?.weekday_avg || [];
-  const hours = opts.hourlySeries || dash.series?.hourly_activity || [];
-  const topW = [...weekdays].sort((a, b) => (b.duration_sec || 0) - (a.duration_sec || 0))[0];
-  const topH = [...hours].sort((a, b) => (b.duration_sec || 0) - (a.duration_sec || 0))[0];
+  const weekdays = toArray(opts.weekdaySeries).length ? toArray(opts.weekdaySeries) : toArray(dash.series?.weekday_avg);
+  const hours = toArray(opts.hourlySeries).length ? toArray(opts.hourlySeries) : toArray(dash.series?.hourly_activity);
+  const topW = weekdays.slice().sort((a, b) => (b.duration_sec || 0) - (a.duration_sec || 0))[0];
+  const topH = hours.slice().sort((a, b) => (b.duration_sec || 0) - (a.duration_sec || 0))[0];
   const trendSeries = opts.trendSeries || [];
   const trendDays = Number(opts.trendDays) || 90;
   const selectedTotal = trendSeries.reduce((sum, d) => sum + (Number(d.duration_sec) || 0), 0);
@@ -1339,9 +1477,9 @@ function buildInsights(dash, opts = {}) {
 
 function getTrendSeriesByDays(series = {}, days = 90) {
   const all = []
-    .concat(series.daily_365d || [])
-    .concat(series.daily_180d || [])
-    .concat(series.daily_90d || []);
+    .concat(toArray(series.daily_365d))
+    .concat(toArray(series.daily_180d))
+    .concat(toArray(series.daily_90d));
   const seen = new Set();
   const deduped = [];
   for (const d of all) {
@@ -1358,7 +1496,7 @@ function getTrendSeriesByDays(series = {}, days = 90) {
 
 function buildMonthlySeriesFromDaily(daily = []) {
   const m = new Map();
-  for (const d of (daily || [])) {
+  for (const d of toArray(daily)) {
     const date = String(d?.date || '');
     if (!date) continue;
     const ym = date.slice(0, 7);
@@ -1380,7 +1518,7 @@ function buildWeekdaySeriesFromDaily(daily = []) {
     [6, { weekday: 'Sat', total: 0, days: 0 }],
     [0, { weekday: 'Sun', total: 0, days: 0 }],
   ]);
-  for (const d of (daily || [])) {
+  for (const d of toArray(daily)) {
     const ds = String(d?.date || '');
     if (!ds) continue;
     const dt = new Date(`${ds}T00:00:00`);
@@ -1423,7 +1561,7 @@ function getTopBooksByDays(topBooks = {}, kind = 'time', days = 90) {
 }
 
 function getStreaksFromDailySeries(daily = []) {
-  const sorted = [...(daily || [])]
+  const sorted = toArray(daily).slice()
     .filter((d) => d && d.date)
     .sort((a, b) => String(a.date).localeCompare(String(b.date)));
   let best = 0;
@@ -1581,16 +1719,17 @@ function buildTopBooksList(items, metricKey) {
    Calendar page
    ============================================================ */
 async function renderCalendar() {
-  const [dash, booksResp] = await Promise.all([
-    getDashboard(),
-    api('books').catch(() => ({ books: [] })),
-  ]);
-  const coverResolver = buildLibraryCoverResolver(booksResp.books || []);
+  const dash = await getDashboard();
+  const booksResp = await api('books').catch(() => ({ books: [] }));
+  const coverResolver = buildLibraryCoverResolver(toArray(booksResp && booksResp.books));
   const dayMap = {};
-  for (const d of (dash.calendar?.days || [])) {
+  const days = toArray(dash && dash.calendar && dash.calendar.days);
+  for (let i = 0; i < days.length; i += 1) {
+    const d = days[i] || {};
+    if (!d.date) continue;
     dayMap[d.date] = {
       ...d,
-      top_books: (d.top_books || []).map(coverResolver),
+      top_books: toArray(d.top_books).map(coverResolver),
     };
   }
   renderCalendarView(dash, dayMap, coverResolver);
@@ -1745,7 +1884,7 @@ function updateCalendarDaySelectionUI(dayMap) {
 }
 
 function buildCalendarDayDetail(day) {
-  const top = day.top_books || [];
+  const top = toArray(day.top_books);
   return `
     <div class="calendar-day-detail">
       <div class="day-detail-summary">
@@ -1769,7 +1908,7 @@ function buildCalendarDayDetail(day) {
 
 function buildBookDailyHeatmap(rows = [], annotations = []) {
   const dayMap = new Map();
-  for (const s of rows) {
+  for (const s of toArray(rows)) {
     const key = String(s?.date || '');
     if (!key) continue;
     const isDailyAgg = Number.isFinite(Number(s?.duration_sec));
@@ -1785,7 +1924,7 @@ function buildBookDailyHeatmap(rows = [], annotations = []) {
     }
     dayMap.set(key, slot);
   }
-  for (const a of annotations) {
+  for (const a of toArray(annotations)) {
     const d = parseDateLike(a?.datetime || a?.datetime_updated);
     const key = d ? toDateStr(startOfDay(d)) : '';
     if (!key) continue;
@@ -1864,9 +2003,10 @@ async function renderBook() {
   const annotations = dedupeAnnotationsForDisplay(Array.isArray(annResp?.annotations) ? annResp.annotations : []);
   const timeline = Array.isArray(timelineResp?.sessions) ? timelineResp.sessions : [];
   const timelineDaily = Array.isArray(timelineResp?.daily) ? timelineResp.daily : [];
-  const statsIndexes = buildStatsIndexes(statsResp.books || []);
+  const statsBooks = toArray(statsResp.books);
+  const statsIndexes = buildStatsIndexes(statsBooks);
   book.cover_url = bookCoverUrl(currentBookRef);
-  const bStats = findBestStatsMatch(book, statsResp.books || [], statsIndexes) || {};
+  const bStats = findBestStatsMatch(book, statsBooks, statsIndexes) || {};
   const pagesRead = book.pages ? Math.round((book.percent / 100) * book.pages) : 0;
   const pct = Math.round(book.percent || 0);
   const statusTag = getBookStatusTag(book);
@@ -1958,6 +2098,8 @@ function buildDetailMetric(label, value, ic) {
 }
 
 function buildBookMilestones({ sessions = [], annotations = [], totalSessions = 0, firstSession = null, lastSession = null } = {}) {
+  sessions = toArray(sessions);
+  annotations = toArray(annotations);
   if (!sessions.length && !annotations.length) {
     return '<div class="empty-inline">No timeline data for this book yet.</div>';
   }

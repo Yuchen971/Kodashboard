@@ -1,17 +1,26 @@
 # Important Clarification
 
-This plugin is primarily for my own use, and it's not intended to run as a continuously active web server on the Kindle. (unless you want to drain the device’s battery.)
+This plugin is primarily for my own use, and it's not intended to run as a continuously active web server on the Kindle.
 
 The expected workflow is:
 
 - Launch the plugin when needed
-
 - Briefly access the dashboard from a phone or computer on the same local network
-
 - Stop the server after reviewing the data
 
+For cover display:
+
+- Existing books do not show dashboard covers until cover files are saved.
+- This is optional and not enabled by default.
+- If you do not press `Pull Covers` in the frontend, no book covers will be shown.
+- If you press `Pull Covers`, covers are now stored as WebP. In my test, ~50 covers used around 1.1 MB.
+
+Power usage note:
+
+- The networking part is one of the biggest Kindle battery drains.
+- My recommended use case is: start the plugin, review/screenshot what you need, then stop the server.
+
 **It is designed for short, on-demand sessions rather than persistent background operation.**
-**If you are looking for a continuously hosted or externally accessible solution, alternatives such as KOInsight (self-hosted) or KOStatsMulti (publicly hosted) may be more appropriate depending on your preferences.**
 
 # KoDashboard
 
@@ -24,26 +33,26 @@ Open it from any device on the same local network (phone, tablet, laptop) to exp
 ### Books
 
 <p align="center">
-  <img src="./screenshots/Books%20-%20Desktop.jpeg" alt="Books Desktop" width="64%" />
-  <img src="./screenshots/Books%20-%20Mobile.png" alt="Books Mobile" width="30%" />
+  <img src="./screenshots/books-desktop.jpeg" alt="Books Desktop" width="64%" />
+  <img src="./screenshots/books-mobile.png" alt="Books Mobile" width="30%" />
 </p>
 
 <p align="center">
-  <img src="./screenshots/Books%20Detail%20-%20Desktop.png" alt="Book Detail Desktop" width="82%" />
+  <img src="./screenshots/books-detail-desktop.png" alt="Book Detail Desktop" width="82%" />
 </p>
 
 ### Calendar
 
 <p align="center">
-  <img src="./screenshots/Calendar%20-%20Desktop.png" alt="Calendar Desktop" width="64%" />
-  <img src="./screenshots/Calendar%20-%20Mobile.png" alt="Calendar Mobile" width="30%" />
+  <img src="./screenshots/calendar-desktop.png" alt="Calendar Desktop" width="64%" />
+  <img src="./screenshots/calendar-mobile.png" alt="Calendar Mobile" width="30%" />
 </p>
 
 ### Stats
 
 <p align="center">
-  <img src="./screenshots/Stats%20-%20Desktop.png" alt="Stats Desktop" width="64%" />
-  <img src="./screenshots/Stats%20-%20Mobile.png" alt="Stats Mobile" width="30%" />
+  <img src="./screenshots/stats-desktop.png" alt="Stats Desktop" width="64%" />
+  <img src="./screenshots/stats-mobile.png" alt="Stats Mobile" width="30%" />
 </p>
 
 ### Highlights
@@ -174,7 +183,7 @@ The exported JSON includes structured rows such as:
 
 ## API Endpoints
 
-All endpoints are `GET` only.
+Most endpoints are `GET`. Cover upload uses `POST`.
 
 - `/api/books`
 - `/api/books/:book_ref`
@@ -182,6 +191,7 @@ All endpoints are `GET` only.
 - `/api/books/:book_ref/timeline`
 - `/api/books/:book_ref/cover`
 - `/api/books/:book_ref/fetch-cover`
+- `/api/books/:book_ref/upload-cover` (`POST`, binary image body)
 - `/api/highlights`
 - `/api/stats`
 - `/api/overview`
@@ -192,7 +202,7 @@ All endpoints are `GET` only.
 - Intended for local network use
 - Server binds to all interfaces (`*`) on the configured port
 - Static files are served from the plugin `web/` directory
-- Only `GET` requests are supported by the built-in server
+- The built-in server supports `GET` and `POST` requests
 
 ## Troubleshooting
 

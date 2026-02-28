@@ -106,6 +106,43 @@ local function ensure_dir(path)
     return ok or lfs.attributes(path, "mode") == "directory"
 end
 
+local function image_ext_from_ctype(ctype)
+    local ct = tostring(ctype or ""):lower()
+    if ct:find("webp", 1, true) then return ".webp" end
+    if ct:find("png", 1, true) then return ".png" end
+    return ".jpg"
+end
+
+local function normalize_image_ctype(ctype)
+    local ct = tostring(ctype or ""):lower()
+    if ct:find("webp", 1, true) then return CTYPE.WEBP end
+    if ct:find("png", 1, true) then return CTYPE.PNG end
+    if ct:find("jpeg", 1, true) or ct:find("jpg", 1, true) then return CTYPE.JPEG end
+    return nil
+end
+
+local function image_ctype_from_ext(ext)
+    ext = tostring(ext or ""):lower()
+    if ext == ".webp" then return CTYPE.WEBP end
+    if ext == ".png" then return CTYPE.PNG end
+    return CTYPE.JPEG
+end
+
+local function detect_image_ctype_from_body(body)
+    body = tostring(body or "")
+    if #body < 4 then return nil end
+    if #body >= 12 and body:sub(1, 4) == "RIFF" and body:sub(9, 12) == "WEBP" then
+        return CTYPE.WEBP
+    end
+    if #body >= 8 and body:sub(1, 8) == "\137PNG\r\n\026\n" then
+        return CTYPE.PNG
+    end
+    if body:sub(1, 2) == "\255\216" then
+        return CTYPE.JPEG
+    end
+    return nil
+end
+
 local function http_get(url)
     local chunks = {}
     if has_socketutil then
@@ -251,7 +288,7 @@ local function extract_local_cover_to_cache(book)
     local out_ctype = nil
 
     local ok_write_jpg = pcall(function()
-        saved = cover_bb:writeToFile(jpg_path, "jpg", 90, false) and true or false
+        saved = cover_bb:writeToFile(jpg_path, "jpg", 80, false) and true or false
     end)
     if ok_write_jpg and saved then
         out_path = jpg_path
@@ -279,6 +316,23 @@ local function extract_local_cover_to_cache(book)
         content_type = out_ctype or CTYPE.JPEG,
         source = "embedded",
     }
+end
+
+local function download_openlibrary_cover(cover_id)
+    local attempts = {
+        string.format("%s/b/id/%s-L.webp?default=false", OPEN_LIBRARY_COVERS, cover_id),
+        string.format("%s/b/id/%s-L.jpg?default=false", OPEN_LIBRARY_COVERS, cover_id),
+    }
+    local last_err = nil
+    for _, url in ipairs(attempts) do
+        local body, err, headers = http_get(url)
+        if body then
+            local ctype = headers and (headers["content-type"] or headers["Content-Type"]) or nil
+            return body, ctype, headers, url
+        end
+        last_err = err
+    end
+    return nil, nil, nil, nil, last_err
 end
 
 local function first_cover_id_for_query(query)
@@ -344,14 +398,97 @@ local function first_cover_id_for_book(book)
     return nil, (last_err or "no cover id"), last_query
 end
 
+local function delete_existing_cover_variants(cover_dir, cover_key, keep_ext)
+    local exts = { ".jpg", ".jpeg", ".png", ".webp", ".gif" }
+    for _, ext in ipairs(exts) do
+        if ext ~= keep_ext then
+            pcall(function()
+                os.remove(string.format("%s/%s%s", cover_dir, tostring(cover_key), ext))
+            end)
+        end
+    end
+end
+
+local function save_uploaded_cover(book_ref, body, header_ctype)
+    local books = DataLoader:getBooks()
+    local book = find_book_in_list_by_id(books, book_ref)
+    if not book then
+        return { ok = false, error = "Book not found" }, 404
+    end
+
+    body = tostring(body or "")
+    local body_size = #body
+    if body_size <= 0 then
+        return { ok = false, error = "Empty body" }, 400
+    end
+    if body_size > (2 * 1024 * 1024) then
+        return { ok = false, error = "Cover payload too large (>2MB)" }, 413
+    end
+
+    local sniffed_ctype = detect_image_ctype_from_body(body)
+    local declared_ctype = normalize_image_ctype(header_ctype)
+    local ctype = sniffed_ctype or declared_ctype
+    if ctype ~= CTYPE.JPEG and ctype ~= CTYPE.PNG and ctype ~= CTYPE.WEBP then
+        return { ok = false, error = "Unsupported image format" }, 415
+    end
+
+    local cover_dir = get_cover_storage_dir()
+    if not ensure_dir(cover_dir) then
+        return { ok = false, error = "Unable to create cover dir" }, 500
+    end
+
+    local cover_key = get_cover_cache_key(book)
+    if not cover_key then
+        return { ok = false, error = "No cache key for cover" }, 500
+    end
+
+    local ext = image_ext_from_ctype(ctype)
+    local path = string.format("%s/%s%s", cover_dir, tostring(cover_key), ext)
+    local f = io.open(path, "wb")
+    if not f then
+        return { ok = false, error = "Unable to save cover", path = path }, 500
+    end
+    f:write(body)
+    f:close()
+
+    delete_existing_cover_variants(cover_dir, cover_key, ext)
+
+    return {
+        ok = true,
+        saved = true,
+        md5 = book.md5,
+        cover_cache_key = cover_key,
+        path = path,
+        content_type = ctype,
+        source = "upload",
+    }, 200
+end
+
 function Api.handleRequest(server, reqinfo, path, full_uri)
     local cover_book_ref = path:match("^/api/books/([^/]+)/cover$")
     if cover_book_ref then
         return Api.sendBookCover(server, reqinfo, cover_book_ref)
     end
 
+    local upload_cover_book_ref = path:match("^/api/books/([^/]+)/upload%-cover$")
+    if upload_cover_book_ref then
+        if reqinfo.method ~= "POST" then
+            return server:sendResponse(reqinfo, 405, CTYPE.JSON, '{"ok":false,"error":"Only POST supported"}')
+        end
+        local payload, status = save_uploaded_cover(
+            upload_cover_book_ref,
+            reqinfo.body or "",
+            reqinfo.headers and reqinfo.headers["content-type"] or nil
+        )
+        local enc_ok, json_str = pcall(JSON.encode, payload or { ok = false, error = "encode failure" })
+        if not enc_ok then
+            return server:sendResponse(reqinfo, 500, CTYPE.JSON, '{"ok":false,"error":"json encoding failed"}')
+        end
+        return server:sendResponse(reqinfo, status or 200, CTYPE.JSON, json_str)
+    end
+
     local ok, result = xpcall(function()
-        return Api.route(path, full_uri)
+        return Api.route(path, full_uri, reqinfo)
     end, function(err)
         if debug and debug.traceback then
             return debug.traceback(tostring(err), 2)
@@ -403,7 +540,10 @@ function Api.sendBookCover(server, reqinfo, book_ref)
     return server:sendResponse(reqinfo, 200, cover_info.content_type or CTYPE.JPEG, body)
 end
 
-function Api.route(path, full_uri)
+function Api.route(path, full_uri, reqinfo)
+    if reqinfo and reqinfo.method ~= "GET" then
+        return { error = "Method not allowed: " .. tostring(reqinfo.method) }
+    end
     if path == "/api/books" then
         return Api.getBooks()
     end
@@ -551,9 +691,7 @@ function Api.fetchBookCover(book_ref)
         }
     end
 
-    local cover_body, cover_err, headers = http_get(
-        string.format("%s/b/id/%s-L.jpg?default=false", OPEN_LIBRARY_COVERS, cover_id)
-    )
+    local cover_body, ctype, _, fetched_url, cover_err = download_openlibrary_cover(cover_id)
     if not cover_body then
         local embedded, emb_err = extract_local_cover_to_cache(book)
         if embedded then
@@ -566,6 +704,7 @@ function Api.fetchBookCover(book_ref)
                 path = embedded.path,
                 content_type = embedded.content_type,
                 cover_error = cover_err,
+                fetched_url = fetched_url,
             }
         end
         return {
@@ -574,6 +713,7 @@ function Api.fetchBookCover(book_ref)
             fallback_error = emb_err,
             md5 = book.md5,
             cover_id = cover_id,
+            fetched_url = fetched_url,
         }
     end
 
@@ -582,11 +722,7 @@ function Api.fetchBookCover(book_ref)
         return { ok = false, error = "Unable to create cover dir", md5 = book.md5 }
     end
 
-    local ctype = headers and (headers["content-type"] or headers["Content-Type"]) or "image/jpeg"
-    local ext = ".jpg"
-    if ctype and tostring(ctype):find("png", 1, true) then ext = ".png" end
-    if ctype and tostring(ctype):find("webp", 1, true) then ext = ".webp" end
-    if ctype and tostring(ctype):find("gif", 1, true) then ext = ".gif" end
+    local ext = image_ext_from_ctype(ctype)
 
     local cover_key = get_cover_cache_key(book)
     if not cover_key then
@@ -609,8 +745,9 @@ function Api.fetchBookCover(book_ref)
         path = path,
         query = query,
         used_query = used_query,
-        content_type = ctype,
+        content_type = image_ctype_from_ext(ext),
         source = "openlibrary",
+        fetched_url = fetched_url,
     }
 end
 
