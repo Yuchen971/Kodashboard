@@ -1336,11 +1336,7 @@ function buildBooksTable(books, statsIndexes, statsBooks) {
    Stats page
    ============================================================ */
 async function renderStats() {
-  const [dash, booksResp] = await Promise.all([
-    getDashboard(),
-    api('books').catch(() => ({ books: [] })),
-  ]);
-  const coverResolver = buildLibraryCoverResolver(toArray(booksResp.books));
+  const dash = await getDashboard();
   const s = dash.summary || {};
   const k = dash.kpis || {};
   const series = dash.series || {};
@@ -1355,8 +1351,8 @@ async function renderStats() {
   const hourlySeries = getHourlySeriesByDays(series, trendDays);
   const insights = buildInsights(dash, { trendDays, trendSeries, weekdaySeries, hourlySeries });
   const booksTouched = getBooksTouchedByDays(k, trendDays);
-  const topByTime = getTopBooksByDays(dash.top_books || {}, 'time', trendDays).map(coverResolver);
-  const topByPages = getTopBooksByDays(dash.top_books || {}, 'pages', trendDays).map(coverResolver);
+  const topByTime = getTopBooksByDays(dash.top_books || {}, 'time', trendDays);
+  const topByPages = getTopBooksByDays(dash.top_books || {}, 'pages', trendDays);
 
   $content.innerHTML = `
     <div class="view-fade stats-view">
@@ -1720,8 +1716,7 @@ function buildTopBooksList(items, metricKey) {
    ============================================================ */
 async function renderCalendar() {
   const dash = await getDashboard();
-  const booksResp = await api('books').catch(() => ({ books: [] }));
-  const coverResolver = buildLibraryCoverResolver(toArray(booksResp && booksResp.books));
+  const coverResolver = (item) => item;
   const dayMap = {};
   const days = toArray(dash && dash.calendar && dash.calendar.days);
   for (let i = 0; i < days.length; i += 1) {

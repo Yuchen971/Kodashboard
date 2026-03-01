@@ -4,6 +4,34 @@ local logger = require("logger")
 local ffiutil = require("ffi/util")
 
 local DataLoader = {}
+local DASHBOARD_CACHE_TTL_SEC = 8
+
+local function cache_dashboard_payload(payload)
+    DataLoader._dashboard_cache = {
+        ts = os.time(),
+        payload = payload,
+    }
+    return payload
+end
+
+local function build_hourly_slots()
+    local slots = {}
+    for hour = 0, 23 do
+        slots[hour] = { sessions = 0, duration_sec = 0 }
+    end
+    return slots
+end
+
+local function append_hourly_series(target, slots)
+    for hour = 0, 23 do
+        local v = slots[hour] or { sessions = 0, duration_sec = 0 }
+        table.insert(target, {
+            hour = hour,
+            sessions = tonumber(v.sessions) or 0,
+            duration_sec = tonumber(v.duration_sec) or 0,
+        })
+    end
+end
 
 local function parse_date_ymd(s)
     if type(s) ~= "string" then return nil end
@@ -949,6 +977,12 @@ function DataLoader:getStats()
 end
 
 function DataLoader:getDashboard()
+    local cache = self._dashboard_cache
+    local now_ts = os.time()
+    if cache and cache.payload and (now_ts - (tonumber(cache.ts) or 0) <= DASHBOARD_CACHE_TTL_SEC) then
+        return cache.payload
+    end
+
     local payload = new_dashboard_payload()
 
     local books = self:getBooks()
@@ -966,19 +1000,19 @@ function DataLoader:getDashboard()
 
     local db_path = resolve_statistics_db_path()
     if lfs.attributes(db_path, "mode") ~= "file" then
-        return payload
+        return cache_dashboard_payload(payload)
     end
 
     local load_ok, SQ3 = pcall(require, "lua-ljsqlite3/init")
     if not load_ok then
         logger.warn("KoDashboard: Failed to load lua-ljsqlite3:", SQ3)
-        return payload
+        return cache_dashboard_payload(payload)
     end
 
     local open_ok, conn = pcall(SQ3.open, db_path)
     if not open_ok then
         logger.warn("KoDashboard: Failed to open statistics db:", conn)
-        return payload
+        return cache_dashboard_payload(payload)
     end
 
     local has_book = false
@@ -1035,7 +1069,7 @@ function DataLoader:getDashboard()
             table.insert(payload.top_books.by_pages, stats_books[i])
         end
         conn:close()
-        return payload
+        return cache_dashboard_payload(payload)
     end
 
     local daily_all = {}
@@ -1045,6 +1079,29 @@ function DataLoader:getDashboard()
     local day_book_map_90 = {}
     local day_book_map_180 = {}
     local day_book_map_365 = {}
+    local top_rollup_30 = {}
+    local top_rollup_90 = {}
+    local top_rollup_180 = {}
+    local top_rollup_365 = {}
+
+    local function accumulate_top_rollup(store, book_id, duration_sec, pages_events)
+        if not store or not book_id or book_id == 0 then return end
+        local item = store[book_id]
+        if not item then
+            local sb = stats_book_map[book_id] or {}
+            item = {
+                stats_book_id = book_id,
+                title = sb.title or "",
+                authors = sb.authors or "",
+                md5 = sb.md5 or "",
+                total_read_time_sec = 0,
+                total_read_pages = 0,
+            }
+            store[book_id] = item
+        end
+        item.total_read_time_sec = (item.total_read_time_sec or 0) + (tonumber(duration_sec) or 0)
+        item.total_read_pages = (item.total_read_pages or 0) + (tonumber(pages_events) or 0)
+    end
 
     pcall(function()
         local stmt = conn:prepare([[
@@ -1131,22 +1188,24 @@ function DataLoader:getDashboard()
 
     pcall(function()
         local stmt = conn:prepare([[
-            SELECT day, id_book, total_duration FROM (
+            SELECT day, id_book, total_duration, pages_events FROM (
               SELECT date(start_time, 'unixepoch', 'localtime') as day,
                      id_book,
-                     SUM(duration) as total_duration
+                     SUM(duration) as total_duration,
+                     COUNT(*) as pages_events
               FROM page_stat_data
               WHERE start_time > 0
+                AND start_time >= strftime('%s', 'now', 'localtime', '-364 days', 'start of day')
               GROUP BY day, id_book
               ORDER BY day DESC, total_duration DESC
             )
         ]])
         local row = stmt:step()
-        local now = os.time()
         while row do
             local day = row[1] and tostring(row[1]) or ""
             local book_id = tonumber(row[2]) or 0
             local duration = tonumber(row[3]) or 0
+            local pages_events = tonumber(row[4]) or 0
             if day ~= "" then
                 local slot = daily_map_180[day]
                 if not slot then
@@ -1166,11 +1225,23 @@ function DataLoader:getDashboard()
                 end
                 local t = parse_date_ymd(day)
                 if t then
-                    local age = now - t
-                    if age <= (30 * 86400 + 86400) then day_book_map_30[book_id] = true end
-                    if age <= (90 * 86400 + 86400) then day_book_map_90[book_id] = true end
-                    if age <= (180 * 86400 + 86400) then day_book_map_180[book_id] = true end
-                    if age <= (365 * 86400 + 86400) then day_book_map_365[book_id] = true end
+                    local age = now_ts - t
+                    if age <= (365 * 86400 + 86400) then
+                        day_book_map_365[book_id] = true
+                        accumulate_top_rollup(top_rollup_365, book_id, duration, pages_events)
+                    end
+                    if age <= (180 * 86400 + 86400) then
+                        day_book_map_180[book_id] = true
+                        accumulate_top_rollup(top_rollup_180, book_id, duration, pages_events)
+                    end
+                    if age <= (90 * 86400 + 86400) then
+                        day_book_map_90[book_id] = true
+                        accumulate_top_rollup(top_rollup_90, book_id, duration, pages_events)
+                    end
+                    if age <= (30 * 86400 + 86400) then
+                        day_book_map_30[book_id] = true
+                        accumulate_top_rollup(top_rollup_30, book_id, duration, pages_events)
+                    end
                 end
             end
             row = stmt:step()
@@ -1203,26 +1274,17 @@ function DataLoader:getDashboard()
             ["6"] = { weekday = "Sat", total = 0, days = 0 },
             ["0"] = { weekday = "Sun", total = 0, days = 0 },
         }
-        pcall(function()
-            local stmt = conn:prepare([[
-                SELECT strftime('%w', start_time, 'unixepoch', 'localtime') as wday,
-                       SUM(duration) as total_duration,
-                       COUNT(DISTINCT date(start_time, 'unixepoch', 'localtime')) as day_count
-                FROM page_stat_data
-                WHERE start_time > 0
-                GROUP BY wday
-            ]])
-            local row = stmt:step()
-            while row do
-                local key = row[1] and tostring(row[1]) or ""
-                if wmap[key] then
-                    wmap[key].total = tonumber(row[2]) or 0
-                    wmap[key].days = tonumber(row[3]) or 0
+        for _, d in ipairs(daily_all) do
+            local ts = parse_date_ymd(d.date)
+            if ts then
+                local key = os.date("%w", ts)
+                local slot = wmap[key]
+                if slot then
+                    slot.total = slot.total + (tonumber(d.duration_sec) or 0)
+                    slot.days = slot.days + 1
                 end
-                row = stmt:step()
             end
-            stmt:close()
-        end)
+        end
         local order = {"1","2","3","4","5","6","0"}
         for _, k in ipairs(order) do
             local v = wmap[k]
@@ -1233,102 +1295,91 @@ function DataLoader:getDashboard()
         end
     end
 
-    pcall(function()
-        local stmt = conn:prepare([[
-            SELECT strftime('%H', start_time, 'unixepoch', 'localtime') as hh,
-                   COUNT(*) as sessions,
-                   SUM(duration) as total_duration
-            FROM page_stat_data
-            WHERE start_time > 0
-            GROUP BY hh
-            ORDER BY hh ASC
-        ]])
-        local rows = {}
-        local row = stmt:step()
-        while row do
-            rows[tostring(row[1] or "")] = {
-                sessions = tonumber(row[2]) or 0,
-                duration_sec = tonumber(row[3]) or 0,
-            }
-            row = stmt:step()
-        end
-        stmt:close()
-        for hour = 0, 23 do
-            local key = string.format("%02d", hour)
-            local v = rows[key] or { sessions = 0, duration_sec = 0 }
-            table.insert(payload.series.hourly_activity, {
-                hour = hour,
-                sessions = v.sessions,
-                duration_sec = v.duration_sec,
-            })
-        end
-    end)
+    do
+        local h30 = build_hourly_slots()
+        local h90 = build_hourly_slots()
+        local h180 = build_hourly_slots()
+        local h365 = build_hourly_slots()
 
-    local function fill_hourly_range(days, target)
         pcall(function()
-            local stmt = conn:prepare(string.format([[
-                SELECT strftime('%%H', start_time, 'unixepoch', 'localtime') as hh,
+            local stmt = conn:prepare([[
+                SELECT date(start_time, 'unixepoch', 'localtime') as day,
+                       strftime('%H', start_time, 'unixepoch', 'localtime') as hh,
                        COUNT(*) as sessions,
                        SUM(duration) as total_duration
                 FROM page_stat_data
                 WHERE start_time > 0
-                  AND start_time >= strftime('%%s', 'now', 'localtime', '-%d days', 'start of day')
-                GROUP BY hh
-                ORDER BY hh ASC
-            ]], math.max(0, (tonumber(days) or 1) - 1)))
-            local rows = {}
+                  AND start_time >= strftime('%s', 'now', 'localtime', '-364 days', 'start of day')
+                GROUP BY day, hh
+                ORDER BY day ASC, hh ASC
+            ]])
             local row = stmt:step()
             while row do
-                rows[tostring(row[1] or "")] = {
-                    sessions = tonumber(row[2]) or 0,
-                    duration_sec = tonumber(row[3]) or 0,
-                }
+                local day = row[1] and tostring(row[1]) or ""
+                local hour = tonumber(row[2])
+                local sessions = tonumber(row[3]) or 0
+                local duration_sec = tonumber(row[4]) or 0
+                if day ~= "" and hour and hour >= 0 and hour <= 23 then
+                    local ts = parse_date_ymd(day)
+                    if ts then
+                        local age = now_ts - ts
+                        if age <= (365 * 86400 + 86400) then
+                            h365[hour].sessions = h365[hour].sessions + sessions
+                            h365[hour].duration_sec = h365[hour].duration_sec + duration_sec
+                        end
+                        if age <= (180 * 86400 + 86400) then
+                            h180[hour].sessions = h180[hour].sessions + sessions
+                            h180[hour].duration_sec = h180[hour].duration_sec + duration_sec
+                        end
+                        if age <= (90 * 86400 + 86400) then
+                            h90[hour].sessions = h90[hour].sessions + sessions
+                            h90[hour].duration_sec = h90[hour].duration_sec + duration_sec
+                        end
+                        if age <= (30 * 86400 + 86400) then
+                            h30[hour].sessions = h30[hour].sessions + sessions
+                            h30[hour].duration_sec = h30[hour].duration_sec + duration_sec
+                        end
+                    end
+                end
                 row = stmt:step()
             end
             stmt:close()
-            for hour = 0, 23 do
-                local key = string.format("%02d", hour)
-                local v = rows[key] or { sessions = 0, duration_sec = 0 }
-                table.insert(target, {
-                    hour = hour,
-                    sessions = v.sessions,
-                    duration_sec = v.duration_sec,
-                })
-            end
         end)
+
+        append_hourly_series(payload.series.hourly_activity_30d, h30)
+        append_hourly_series(payload.series.hourly_activity_90d, h90)
+        append_hourly_series(payload.series.hourly_activity_180d, h180)
+        append_hourly_series(payload.series.hourly_activity_365d, h365)
+        append_hourly_series(payload.series.hourly_activity, h365)
     end
 
-    fill_hourly_range(30, payload.series.hourly_activity_30d)
-    fill_hourly_range(90, payload.series.hourly_activity_90d)
-    fill_hourly_range(180, payload.series.hourly_activity_180d)
-    fill_hourly_range(365, payload.series.hourly_activity_365d)
-
-    pcall(function()
-        local stmt = conn:prepare([[
-            SELECT strftime('%Y-%m', start_time, 'unixepoch', 'localtime') as ym,
-                   SUM(duration) as total_duration,
-                   COUNT(DISTINCT date(start_time, 'unixepoch', 'localtime')) as days_read
-            FROM page_stat_data
-            WHERE start_time > 0
-            GROUP BY ym
-            ORDER BY ym DESC
-            LIMIT 12
-        ]])
-        local temp = {}
-        local row = stmt:step()
-        while row do
-            table.insert(temp, {
-                month = row[1] and tostring(row[1]) or "",
-                duration_sec = tonumber(row[2]) or 0,
-                days_read = tonumber(row[3]) or 0,
-            })
-            row = stmt:step()
+    do
+        local monthly_map = {}
+        local monthly_keys = {}
+        for _, d in ipairs(daily_all) do
+            local ym = tostring(d.date or ""):sub(1, 7)
+            if ym ~= "" then
+                local slot = monthly_map[ym]
+                if not slot then
+                    slot = { month = ym, duration_sec = 0, days_read = 0 }
+                    monthly_map[ym] = slot
+                    table.insert(monthly_keys, ym)
+                end
+                slot.duration_sec = slot.duration_sec + (tonumber(d.duration_sec) or 0)
+                if (tonumber(d.duration_sec) or 0) > 0 then
+                    slot.days_read = slot.days_read + 1
+                end
+            end
         end
-        stmt:close()
-        for i = #temp, 1, -1 do
-            table.insert(payload.series.monthly_12m, temp[i])
+        table.sort(monthly_keys)
+        local start_idx = math.max(1, #monthly_keys - 11)
+        for i = start_idx, #monthly_keys do
+            local key = monthly_keys[i]
+            if key and monthly_map[key] then
+                table.insert(payload.series.monthly_12m, monthly_map[key])
+            end
         end
-    end)
+    end
 
     summary.best_streak_days = 0
     summary.current_streak_days = 0
@@ -1407,78 +1458,40 @@ function DataLoader:getDashboard()
         table.insert(payload.top_books.by_pages, copy_pages[i])
     end
 
-    local function fill_top_books_range(days, out_time, out_pages)
-        local window_days = math.max(0, (tonumber(days) or 1) - 1)
-        pcall(function()
-            local stmt = conn:prepare(string.format([[
-                SELECT p.id_book,
-                       COALESCE(b.title, '') as title,
-                       COALESCE(b.authors, '') as authors,
-                       COALESCE(b.md5, '') as md5,
-                       SUM(p.duration) as total_read_time_sec,
-                       COUNT(*) as total_read_pages
-                FROM page_stat_data p
-                LEFT JOIN book b ON b.id = p.id_book
-                WHERE p.start_time > 0
-                  AND p.start_time >= strftime('%%s', 'now', 'localtime', '-%d days', 'start of day')
-                GROUP BY p.id_book
-                ORDER BY total_read_time_sec DESC
-                LIMIT 8
-            ]], window_days))
-            local row = stmt:step()
-            while row do
-                table.insert(out_time, {
-                    stats_book_id = tonumber(row[1]) or 0,
-                    title = row[2] and tostring(row[2]) or "",
-                    authors = row[3] and tostring(row[3]) or "",
-                    md5 = row[4] and tostring(row[4]) or "",
-                    total_read_time_sec = tonumber(row[5]) or 0,
-                    total_read_pages = tonumber(row[6]) or 0,
-                })
-                row = stmt:step()
-            end
-            stmt:close()
-        end)
+    local function fill_top_books_range(rollup, out_time, out_pages)
+        local list = {}
+        for _, item in pairs(rollup or {}) do
+            table.insert(list, item)
+        end
+        local copy_time = {}
+        for i = 1, #list do copy_time[i] = list[i] end
+        table.sort(copy_time, sort_desc_num("total_read_time_sec"))
+        for i = 1, math.min(8, #copy_time) do
+            table.insert(out_time, copy_time[i])
+        end
 
-        pcall(function()
-            local stmt = conn:prepare(string.format([[
-                SELECT p.id_book,
-                       COALESCE(b.title, '') as title,
-                       COALESCE(b.authors, '') as authors,
-                       COALESCE(b.md5, '') as md5,
-                       SUM(p.duration) as total_read_time_sec,
-                       COUNT(*) as total_read_pages
-                FROM page_stat_data p
-                LEFT JOIN book b ON b.id = p.id_book
-                WHERE p.start_time > 0
-                  AND p.start_time >= strftime('%%s', 'now', 'localtime', '-%d days', 'start of day')
-                GROUP BY p.id_book
-                ORDER BY total_read_pages DESC, total_read_time_sec DESC
-                LIMIT 8
-            ]], window_days))
-            local row = stmt:step()
-            while row do
-                table.insert(out_pages, {
-                    stats_book_id = tonumber(row[1]) or 0,
-                    title = row[2] and tostring(row[2]) or "",
-                    authors = row[3] and tostring(row[3]) or "",
-                    md5 = row[4] and tostring(row[4]) or "",
-                    total_read_time_sec = tonumber(row[5]) or 0,
-                    total_read_pages = tonumber(row[6]) or 0,
-                })
-                row = stmt:step()
+        local copy_pages = {}
+        for i = 1, #list do copy_pages[i] = list[i] end
+        table.sort(copy_pages, function(a, b)
+            local ap = tonumber(a.total_read_pages) or 0
+            local bp = tonumber(b.total_read_pages) or 0
+            if ap == bp then
+                return (tonumber(a.total_read_time_sec) or 0) > (tonumber(b.total_read_time_sec) or 0)
             end
-            stmt:close()
+            return ap > bp
         end)
+        for i = 1, math.min(8, #copy_pages) do
+            table.insert(out_pages, copy_pages[i])
+        end
     end
 
-    fill_top_books_range(30, payload.top_books.by_time_30d, payload.top_books.by_pages_30d)
-    fill_top_books_range(90, payload.top_books.by_time_90d, payload.top_books.by_pages_90d)
-    fill_top_books_range(180, payload.top_books.by_time_180d, payload.top_books.by_pages_180d)
-    fill_top_books_range(365, payload.top_books.by_time_365d, payload.top_books.by_pages_365d)
+    fill_top_books_range(top_rollup_30, payload.top_books.by_time_30d, payload.top_books.by_pages_30d)
+    fill_top_books_range(top_rollup_90, payload.top_books.by_time_90d, payload.top_books.by_pages_90d)
+    fill_top_books_range(top_rollup_180, payload.top_books.by_time_180d, payload.top_books.by_pages_180d)
+    fill_top_books_range(top_rollup_365, payload.top_books.by_time_365d, payload.top_books.by_pages_365d)
 
     conn:close()
-    return payload
+    return cache_dashboard_payload(payload)
 end
 
 function DataLoader:loadSidecar(doc_path)
