@@ -2,6 +2,7 @@ local DataLoader = require("dataloader")
 local logger = require("logger")
 local lfs = require("libs/libkoreader-lfs")
 local DataStorage = require("datastorage")
+local UIManager = require("ui/uimanager")
 
 local JSON = require("json")
 local socket_url = require("socket.url")
@@ -465,6 +466,29 @@ local function save_uploaded_cover(book_ref, body, header_ctype)
 end
 
 function Api.handleRequest(server, reqinfo, path, full_uri)
+    if path == "/api/server/stop" then
+        if reqinfo.method ~= "POST" then
+            return server:sendResponse(reqinfo, 405, CTYPE.JSON, '{"ok":false,"error":"Only POST supported"}')
+        end
+        local enc_ok, json_str = pcall(JSON.encode, {
+            ok = true,
+            stopping = true,
+            message = "KoDashboard server is stopping",
+        })
+        if not enc_ok then
+            return server:sendResponse(reqinfo, 500, CTYPE.JSON, '{"ok":false,"error":"json encoding failed"}')
+        end
+        local ev = server:sendResponse(reqinfo, 200, CTYPE.JSON, json_str)
+        -- Reply first, then stop the listener to avoid dropping this response mid-flight.
+        UIManager:scheduleIn(0.05, function()
+            local ok_stop, stop_err = pcall(function() server:stop() end)
+            if not ok_stop then
+                logger.err("KoDashboard: failed to stop server from API:", tostring(stop_err))
+            end
+        end)
+        return ev
+    end
+
     local cover_book_ref = path:match("^/api/books/([^/]+)/cover$")
     if cover_book_ref then
         return Api.sendBookCover(server, reqinfo, cover_book_ref)

@@ -72,6 +72,32 @@ async function apiNoCache(path) {
   return payload;
 }
 
+async function apiNoCachePost(path, body = null, contentType = 'application/json') {
+  const opts = { method: 'POST', headers: {} };
+  if (body != null) {
+    opts.headers['Content-Type'] = contentType;
+    opts.body = typeof body === 'string' ? body : JSON.stringify(body);
+  }
+  const r = await fetch('/api/' + path, opts);
+  let payload = null;
+  try {
+    payload = await r.json();
+  } catch {
+    try {
+      payload = await r.text();
+    } catch {
+      payload = null;
+    }
+  }
+  if (!r.ok) {
+    const msg = typeof payload === 'string'
+      ? payload
+      : (payload?.detail || payload?.error || JSON.stringify(payload || {}));
+    throw new Error(`API /${path} returned ${r.status}: ${msg}`);
+  }
+  return payload;
+}
+
 async function apiNoCacheBinary(path, body, contentType = 'application/octet-stream') {
   const r = await fetch('/api/' + path, {
     method: 'POST',
@@ -825,6 +851,32 @@ function setupChrome() {
       overlay.classList.remove('visible');
     });
   });
+
+  const disconnectBtn = document.getElementById('disconnectBtn');
+  if (disconnectBtn) {
+    disconnectBtn.innerHTML = `${icon('close', 14)} Disconnect`;
+    disconnectBtn.addEventListener('click', async () => {
+      const confirmed = window.confirm('Disconnect current client and stop KoDashboard server now?');
+      if (!confirmed) return;
+      disconnectBtn.disabled = true;
+      disconnectBtn.textContent = 'Disconnecting...';
+      try {
+        await apiNoCachePost('server/stop');
+        disconnectBtn.textContent = 'Disconnected';
+        disconnectBtn.classList.add('is-done');
+        hideTooltip();
+        $content.innerHTML = `
+          <section class="panel empty-panel">
+            <h2>Connection closed</h2>
+            <p>KoDashboard server has been stopped. Restart it from KOReader menu when needed.</p>
+          </section>`;
+      } catch (e) {
+        disconnectBtn.disabled = false;
+        disconnectBtn.innerHTML = `${icon('close', 14)} Disconnect`;
+        window.alert(`Disconnect failed: ${e?.message || e}`);
+      }
+    });
+  }
 }
 
 function navigate(view, params = {}) {
@@ -901,8 +953,17 @@ function dedupeBooksForDisplay(books = []) {
     if ((b.pages || 0) > 0) score += 8;
     if ((b.percent || 0) > 0) score += 6;
     if ((b.highlights || 0) > 0) score += 4;
-    score += Math.min(5, Math.floor((Number(b.last_open_ts) || 0) / 1e9));
     return score;
+  }
+
+  function isBetterDisplayCandidate(next, prev) {
+    const nt = Number(next?.last_open_ts) || 0;
+    const pt = Number(prev?.last_open_ts) || 0;
+    if (nt !== pt) return nt > pt;
+    const ns = scoreBookForDisplay(next);
+    const ps = scoreBookForDisplay(prev);
+    if (ns !== ps) return ns > ps;
+    return String(next?.id || '') > String(prev?.id || '');
   }
 
   for (const b of toArray(books)) {
@@ -918,7 +979,7 @@ function dedupeBooksForDisplay(books = []) {
       continue;
     }
     const prev = bestByKey.get(dedupeKey);
-    if (!prev || scoreBookForDisplay(b) > scoreBookForDisplay(prev)) {
+    if (!prev || isBetterDisplayCandidate(b, prev)) {
       bestByKey.set(dedupeKey, b);
     }
   }
@@ -1715,8 +1776,12 @@ function buildTopBooksList(items, metricKey) {
    Calendar page
    ============================================================ */
 async function renderCalendar() {
-  const dash = await getDashboard();
-  const coverResolver = (item) => item;
+  const [dash, booksResp] = await Promise.all([
+    getDashboard(),
+    api('books').catch(() => ({ books: [] })),
+  ]);
+  const allBooks = dedupeBooksForDisplay(toArray(booksResp.books));
+  const coverResolver = buildLibraryCoverResolver(allBooks);
   const dayMap = {};
   const days = toArray(dash && dash.calendar && dash.calendar.days);
   for (let i = 0; i < days.length; i += 1) {

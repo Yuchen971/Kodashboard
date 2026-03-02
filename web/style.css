@@ -270,6 +270,22 @@ body {
   color: var(--text-faint);
   opacity: .7;
 }
+#disconnectBtn.disconnect-btn {
+  position: fixed;
+  right: 14px;
+  bottom: calc(var(--tabbar-h) + 16px);
+  z-index: 36;
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, var(--border));
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+}
+#disconnectBtn.disconnect-btn:hover {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface-2));
+}
+#disconnectBtn.disconnect-btn.is-done {
+  color: var(--text-faint);
+  border-color: var(--border);
+}
 .nav-tab {
   min-height: 58px;
   flex-direction: column;
@@ -2060,6 +2076,13 @@ html[data-color-scheme='light'] .milestone-point .milestone-dot { border-color: 
     bottom: calc(var(--tabbar-h) + 12px);
     font-size: .66rem;
     padding: 5px 9px;
+  }
+  #disconnectBtn.disconnect-btn {
+    right: 10px;
+    bottom: calc(var(--tabbar-h) + 10px);
+    min-height: 34px;
+    padding: 0 10px;
+    font-size: .76rem;
   }
   .nav-tab {
     min-height: 52px;
