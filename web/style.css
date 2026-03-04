@@ -72,6 +72,61 @@ html[data-color-scheme='light'] {
   --shadow-sm: 0 4px 12px rgba(7, 25, 19, 0.05);
 }
 
+
+
+/* ============================================================
+   KOReader Kindle E-ink Mode
+   ============================================================ */
+html.koreader-mode {
+  --bg-0: #f5f5f5;
+  --bg-1: #ffffff;
+  --bg-2: #ededed;
+  --panel: #ffffff;
+  --panel-soft: #ffffff;
+  --surface-2: #ffffff;
+  --surface-3: #f3f3f3;
+  --border: rgba(0, 0, 0, 0.22);
+  --border-strong: rgba(0, 0, 0, 0.35);
+  --text: #111111;
+  --text-dim: #2b2b2b;
+  --text-faint: #5c5c5c;
+  --accent-pink: #111111;
+  --accent-rose: #1f1f1f;
+  --accent-deep: #2d2d2d;
+  --accent-green: #202020;
+  --accent-lime: #2a2a2a;
+  --danger: #000000;
+  --tooltip-bg: #ffffff;
+  --shadow-xl: none;
+  --shadow-lg: none;
+  --shadow-sm: none;
+}
+
+html.koreader-mode #app,
+html.koreader-mode .panel,
+html.koreader-mode .glass,
+html.koreader-mode .card,
+html.koreader-mode .book-cover,
+html.koreader-mode .book-cover.hero,
+html.koreader-mode .book-cover.thumb {
+  box-shadow: none !important;
+  backdrop-filter: none !important;
+  filter: none !important;
+}
+
+html.koreader-mode .book-cover-noise {
+  display: none;
+}
+
+html.koreader-mode .book-cover-img {
+  filter: grayscale(100%) contrast(1.05);
+}
+
+html.koreader-mode #bottom-nav,
+html.koreader-mode .nav-link.active {
+  background: #ffffff;
+}
+
 /* ============================================================
    Base Layout
    ============================================================ */
