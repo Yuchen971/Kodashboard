@@ -99,8 +99,20 @@ Expected path:
 ### KOReader plugin menu options
 
 - Start / Stop dashboard server
+- Open on this Kindle (E-ink view, starts server if needed)
 - Show QR code (starts the server if needed)
 - Port (custom port setting)
+
+
+### KOReader direct Kindle rendering
+
+You can now open KoDashboard directly on the Kindle device itself:
+
+1. Open KOReader menu → `KoDashboard`.
+2. Tap `Open on this Kindle (E-ink view)`.
+3. The plugin starts the server if needed and opens a Kindle-optimized dashboard URL (`?koreader=1`).
+
+This mode keeps the same layout and information architecture as the main dashboard, while reducing heavy visual effects for e-ink readability and refresh stability.
 
 ## Cover Fetching (Pull Covers)
 

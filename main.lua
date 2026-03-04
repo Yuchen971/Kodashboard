@@ -142,6 +142,37 @@ function KoDashboard:showQRCode()
     })
 end
 
+function KoDashboard:openOnDeviceDashboard()
+    if not self:isRunning() then
+        self:start()
+    end
+    if not self:isRunning() then
+        return
+    end
+
+    local url = T("http://127.0.0.1:%1/?koreader=1", self.port)
+    local opened = false
+
+    local ok_uihelper, UIHelper = pcall(require, "ui/uihelper")
+    if ok_uihelper and UIHelper and type(UIHelper.openURL) == "function" then
+        opened = pcall(UIHelper.openURL, UIHelper, url)
+    end
+
+    if not opened then
+        local ok_util, util_module = pcall(require, "util")
+        if ok_util and util_module and type(util_module.openLink) == "function" then
+            opened = pcall(util_module.openLink, url)
+        end
+    end
+
+    if not opened then
+        local InfoMessage = require("ui/widget/infomessage")
+        UIManager:show(InfoMessage:new{
+            text = T(_("Dashboard server is running. Open this URL on Kindle:\n%1"), url),
+        })
+    end
+end
+
 function KoDashboard:addToMainMenu(menu_items)
     menu_items.kodashboard = {
         text = _("KoDashboard"),
@@ -162,6 +193,21 @@ function KoDashboard:addToMainMenu(menu_items)
                     else
                         self:start()
                     end
+                    if touchmenu_instance then
+                        touchmenu_instance:updateItems()
+                    end
+                end,
+            },
+            {
+                text_func = function()
+                    if self:isRunning() then
+                        return _("Open on this Kindle (E-ink view)")
+                    end
+                    return _("Open on this Kindle (starts server)")
+                end,
+                keep_menu_open = true,
+                callback = function(touchmenu_instance)
+                    self:openOnDeviceDashboard()
                     if touchmenu_instance then
                         touchmenu_instance:updateItems()
                     end

@@ -829,6 +829,17 @@ const sidebar = document.getElementById('sidebar');
 const overlay = document.getElementById('overlay');
 const html = document.documentElement;
 
+function applyRuntimeMode() {
+  const params = new URLSearchParams(window.location.search || '');
+  const koreaderMode = params.get('koreader') === '1' || params.get('eink') === '1';
+  if (koreaderMode) {
+    html.classList.add('koreader-mode');
+    html.setAttribute('data-color-scheme', 'light');
+    return;
+  }
+  html.setAttribute('data-color-scheme', 'dark');
+}
+
 function setupChrome() {
   document.getElementById('menu-btn')?.addEventListener('click', () => {
     sidebar.classList.toggle('open');
@@ -839,8 +850,10 @@ function setupChrome() {
     overlay.classList.remove('visible');
   });
 
-  html.setAttribute('data-color-scheme', 'dark');
-  localStorage.setItem('kd-theme', 'dark');
+  applyRuntimeMode();
+  if (!html.classList.contains('koreader-mode')) {
+    localStorage.setItem('kd-theme', 'dark');
+  }
 
   document.querySelectorAll('.nav-link').forEach((link) => {
     link.innerHTML = link.innerHTML; // noop keeps markup but normalizes
